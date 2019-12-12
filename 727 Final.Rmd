@@ -1,0 +1,491 @@
+---
+title: "Using web data to explore the relationship between economic growth, population, and democracy"
+author: Arrue, J. and Batas, R.
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    code_folding: show
+    df_print: kable
+    highlight: textmate
+    theme: simplex
+    toc: yes
+subtitle: World Bank API and Polity data case
+bibliography: reference.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+library(wbstats)
+library(tidyverse)
+library(openxlsx)
+library(ggplot2)
+library(ggpubr)
+library(broom)
+library(plm)
+library(ggfortify)
+library(knitr)
+library(kableExtra)
+```
+
+## 1. Introduction
+
+The study of economic growth has tremendous impact towards a country’s policies and regulation. Different governments around the world invest in economic research to help them guide in making decisions. One way that these projects are being conducted is by looking at the relationship between variables that are related to the economy and its growth. These studies often include demographic variables such as race, income, gender, and educational level, to name a few.
+
+It is known that demographic variables are important determinants of economic growth especially when using Gross Domestic Product (**GDP**) as a measure of growth. One of these demographic variables that have been studied extensively is population growth. However, researchers have debated whether this affects a country’s economy positively and promotes economic growth or if it actually constraints its growth.
+
+Thomas Malthus a scholar in the field of political economy has developed a theory about the relationship between economic growth and population. He believed that a continuous growth in population will eventually lead to humans outgrowing available resources and stump economic growth [@Malthus2000]. This theory has been the focus of several research in the past years questioning the nature of the relationship between the population and economic growth rather than the existence of the relationship itself. To name one example, researchers from the University of Pretoria found different effects of economic growth towards population [@Chang2014]. This study included 21 countries where a one-way Bootstrap Panel Granger Causality test was conducted. They have identified five countries where a relationship between population development and economic growth has been established: Canada, Norway, Germany, Japan, and Switzerland. Out of these five countries, Canada, Norway, and Switzerland showed a positive relationship between the two variables being studied. However, they have found the opposite results for Germany and Japan where economic growth has been found to negatively impact population growth.
+
+With the existence of the relationship between the two variables supported by many scholars, it is then important to have a look at this subject. However, when discussing economic growth, one must take into careful consideration the potential effects of confounding variables. One research which has conducted a meta-analysis of published papers showed that democracy has no negative effects on economic growth and has no direct impact to it [@Doucouliagos2007]. This implies that when predicting a country’s economic growth, democracy is a potential variable to control for. Several papers have controlled for sundry of variables when looking at the relationship between population and economic growth, however, there’s a lack for researches controlling for a country’s democratic level.
+
+The absence of specific literature on the relationship between population and economic growth and how democracy may affect this relationship merits the conduct of this paper. To do so, this project aims to scrape recent data from the web in order to look at the relationship between population and economic growth, to observe whether there is indeed a correlation between the two, and to look whether a country’s democracy would affect impact this relationship as well.
+
+## 2. Objective, hypothesis and methods
+
+### 2.1 Objective
+
+The objective of this research is to explore the relationship between GDP, population, and democracy. It is known that the relationship within and between these three variables has never been clear. Recent economic trends have shown that a country's type of regime is not a determinant of economic growth (e.g., China and Russia's latest GDP increase in the past half-century compared to U.S. or western Europe countries). In addition to that, population has not been able to predict economic development as well (e.g., Nigeria, with a population approximately less than 200 million people doesn't have the same GDP as Japan, with a population of approximately 130 million people).
+
+In order to address this, we will extract indicators from two different sources namely: World Bank (**WB**) Indicators, which are available through the World Bank API, will account for GDP, population, and governance indicators, which are related to GDP increase; and PolityIV Project (**Polity**) to determine whether a type of regime is more or less democratic. This last source will account for the democratic index, a measure that determines the type of regime a country has.
+
+### 2.2 Hypothesis
+
+As an exploratory analysis, the central hypothesis is to test whether there is a relationship between GDP, population, and democracy. In order to test for this, the following questions should be addressed
+
+1. Is there a relationship between GDP and democracy, and how is it?
+2. Is there a relationship between GDP and population, and how is it?
+3. Can democracy check for significant differences in the relationship between GDP and population?
+4. Is governance related to GDP, and how can democracy check for this?
+
+With the literature review, the following hypotheses were developed:
+
+1. Given the latest trends regarding the world’s largest economies, the effect of democracy on GDP, which once was considerably high, has diminished.
+2. Considering the relationship between GDP and expenditure, we suspect that there is not only a positive relationship between both variables but also a significant one.
+3. Even with a small effect for GDP, democracy can check for significant changes in the relationship between GDP and other variables, such as population.
+4. Given that good governance is associated with consistent economic growth, we consider that its relationship with GDP is not only positive but also significant. Democracy, as with population, can check for significative differences between this relationship.
+
+### 2.3 Methods
+
+#### 2.3.1 Data manipulation with Polity
+
+Polity was obtained through <https://ourworldindata.org/democracy>, an online scientific publication that gathers information on many topics around the world and whose research team is based at Oxford University. In order to obtain Polity data on political regimes, available information was downloaded in a *comma separated value* file (.csv).  Political regimes ranges on a scale of -10 *(full autocracy)* to +10 *(full democracy)*. In between values consist of anocracies. In addition, the scale provides information for colonies *(with a value of -20)*. The information on political regimes includes country name, country code, POLITY score, and year. This last variable allows researchers to check for political regimes changes in time. Table 1 provides an example of how POLITY dataset looks like.
+
+
+```{r, echo = FALSE, results='markup'}
+index<-read.csv("political regime.csv",header=TRUE)
+index<-as.data.frame(index)
+knitr::kable(index[1:8,], caption = "Polity data frame")%>%
+  kable_styling(latex_options = c("striped","hold_position", "scale_down"))
+```
+
+In order to merge POLITY with WB data, data manipulation was applied. Country names were deleted, and variables names were modified. In addition, the political regime label given by POLITY was added as well. Table 2 shows how data looks like after reorganization.
+
+```{r, echo = FALSE, results='markup'}
+indexf<-index[,c(2,3,4)]%>%
+  rename(iso3c=Code,
+         index=Political.Regime..OWID.based.on.Polity.IV.and.Wimmer...Min...Score.,
+         date=Year)%>%
+  filter(date>=1960)%>%
+  transform(date=as.character(date))%>%
+  transform(iso3c=as.character(iso3c))%>%
+  mutate(ifelse(index == -20, 0,
+                ifelse(index == -10, 1,
+                ifelse(index == -9, 2,
+                ifelse(index == -8, 3,
+                ifelse(index == -7, 4,
+                ifelse(index == -6, 5,
+                ifelse(index == -5, 6,
+                ifelse(index == -4, 7,
+                ifelse(index == -3, 8,
+                ifelse(index == -2, 9,
+                ifelse(index == -1, 10,
+                ifelse(index == 0, 11,
+                ifelse(index == 1, 12,
+                ifelse(index == 2, 13,
+                ifelse(index == 3, 14,
+                ifelse(index == 4, 15,
+                ifelse(index == 5, 16,
+                ifelse(index == 6, 17,
+                ifelse(index == 7, 18,
+                ifelse(index == 8, 19,
+                ifelse(index == 9, 20, 21))))))))))))))))))))))%>%
+rename(INDEX="ifelse(...)")%>%
+  mutate(ifelse(INDEX >= 17, "Democracy",
+                ifelse(INDEX >= 12, "Open Anocracy",
+                ifelse(INDEX >= 7, "Closed Anocracy",
+                ifelse(INDEX >= 1, "Autocracy", "Colony")))))%>%
+  rename(INDEX_TYPE="ifelse(...)")%>%
+  transform(INDEX=as.integer(INDEX))%>%
+  select((1:5),-3)
+knitr::kable(indexf[1:8,], caption = "Polity data frame modified")%>%
+  kable_styling(latex_options = c("striped","hold_position"))
+```
+
+#### 2.3.2 Data manipulation with World Bank API
+
+The WB API provides different data frames from which researchers can obtain information. Two of which entails important details relevant to a country, while the rest offers an extensive amount of development indicators and variables.  Unfortunately, the indicators information is too extensive to  work within R. For instance, indicators have confusing codes, and the labels are often complicated. This makes extracting the indicators data frame into an Excel file (.xls) as the most efficient means. This provides a friendlier environment to search for the desired indicators.  Another data frame that was considered was the one with more information on countries. As mentioned before, this data frame provides country names and ISO code, which is used by POLITY. This code, alongside the variable related to year, was utilized to merge WB data with POLITY data.  Table 3 gives an example of the information extracted from the World Bank API.
+
+\pagebreak
+
+```{r echo=FALSE, results='markup'}
+countries<-wbcountries()
+indicators<-wbindicators()
+write.xlsx(indicators,"wbindicators.xlsx",asTable=TRUE)
+write.xlsx(countries,"countries.xlsx",asTable=TRUE)
+wbdata<-wb(country="countries_only", indicator = 
+             c("NY.GDP.MKTP.CD","SP.POP.TOTL"),
+           startdate = 1960, enddate = 2015,
+           return_wide = TRUE)
+knitr::kable(wbdata[1:8,], caption = "World Bank data frame")%>%
+  kable_styling(latex_options = c("striped"))
+```
+
+As with POLITY, WB extracted data needs to be rearranged and cleaned prior to merging with POLITY. The following table depicts how the final dataset looks like.
+
+```{r, echo = FALSE, results='markup', message = FALSE, fig.align = "center"}
+wbindexdata<-countries%>%
+  select(iso3c,region)%>%
+  right_join(wbdata,by="iso3c")%>%
+  left_join(indexf,by=NULL)
+
+FULL<-select(wbindexdata,(1:9),-4)%>%
+  rename(GDP_USD=NY.GDP.MKTP.CD,
+         POP=SP.POP.TOTL,)%>%
+  transform(date=as.numeric(date))%>%
+  filter(is.na(GDP_USD)==FALSE)%>%
+  filter(is.na(INDEX)==FALSE)%>%
+  filter(is.na(INDEX_TYPE)==FALSE)
+
+knitr::kable(FULL[1:8,], caption = "Polity with World Bank data frames merged")%>%
+  kable_styling(latex_options = c("striped","hold_position", "scale_down"))
+```
+
+## 3. Predicting economic growth by the democracy index
+
+In order to test the first hypothesis, the relationship between economic growth and the type of regime a country has was taken into account. According to literature and actual trends regarding the most significant economies around the world, it was suspected that there was a weak relationship between the two, especially for recent years.  For this purpose, information from WB data was utilized to provide information regarding GDP as a measure of economic growth. On the other hand, POLITY data was used to provide information regarding political regimes in the form of an index. To conduct linear regressions, we transformed the ranges from -10 to 10 to ranges from 0 to 21.  And to begin with the analyses, the trend for GDP across time was plotted. The trends and changes over time highlighted the presence of some outliers and behavior. Boxplots were used where years were divided by decades for visual presentation.
+
+\pagebreak
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Boxplots: GDP in USD through the years", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=date,y=GDP_USD))+
+  geom_boxplot(aes(group=cut_width(date,0.1)),outlier.colour = "red")+
+  xlab("Year")+ylab("GDP in USD")
+```
+
+As seen above, GDP presents issues for visual presentation. For instance, the outliers make distribution of GDP too skewed. Log~10~ transformation was utilized to remedy this and normalize the GDP variable.
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Boxplots: log10 GDP in USD through the years", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=date,y=GDP_USD))+
+  scale_y_log10()+
+  geom_boxplot(aes(group=cut_width(date,0.1)),outlier.colour = "red")+
+  xlab("Year")+ylab("log10 GDP in USD")
+```
+
+As Figure 2 suggests, there has been a constant increase in countries' GDP over the years. On the other hand, the GDP variable transformation normalized data and allows the use of a linear regression model, using the democratic index as the predictor and log~10~ GDP in USD as the dependent variable.
+
+\pagebreak
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Linear regression model: log10 GDP by democracy index", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=INDEX,y=GDP_USD))+
+  geom_point()+
+  geom_smooth(method = lm, se = FALSE)+
+  scale_y_log10()+
+  facet_wrap(~date,nrow=2)+
+  xlab("Democratic index")+ylab("log10 GDP in USD")
+  
+```
+
+***Summary 1: Linear regression model parameter change through the years. Log~10~ GDP by democratic index***
+
+```{r fig.align="center", echo = FALSE}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  split(.$date)%>%
+  map(~lm(log10(GDP_USD) ~ INDEX, data = .))%>%
+  map(summary)%>%
+  map(coef)
+```
+
+\pagebreak
+
+```{r, echo = FALSE, results='markup'}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  split(.$date)%>%
+  map(~lm(log10(GDP_USD) ~ INDEX, data = .))%>%
+  map(summary)%>%
+  map_dbl("r.squared")%>%
+  kable(., caption = "R squared value through the years: GDP by Democratic Index")%>%
+  kable_styling(latex_options = c("striped","hold_position"))%>%
+  add_header_above(c("Year" = 1, "R squared" = 1))
+```
+
+As hypothesized, there is a weak relationship between GDP and how democratic a country is. The democracy index effect is significant for all decades (*p<0.05*), except for the last decade. On the other hand, its power to explain GDP variation decreased dramatically through time.  When fitting a better line for the regression model relationship between the two can be seen better.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center", fig.cap = "Linear regression model: log10 GDP in USD by democracy index. Fitted relation", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=INDEX,y=GDP_USD))+
+  geom_point()+
+  geom_smooth(span = 0.3)+
+  scale_y_log10()+
+  facet_wrap(~date,nrow=2)+
+  xlab("Democratic index")+ylab("log10 GDP in USD")
+```
+
+In response to the first hypothesis, it can be noted that there is an existing relationship between economic growth and how democratic the country is. However, the relationship is getting weaker over time, or virtually non-existent, especially in the last few years. In addition, the nature of the democratic index might not be useful for a linear regression. For instance, although we transform the democracy index to fit a linear regression model, the index resembles a discrete variable, which might be useful for other types of regression models.
+
+## 4. Democracy working as a fixed effect model: GDP by population
+
+Given the nature of the democratic index and the results from the simple linear regression model, it can be concluded that democracy is better used to test relationships between other variables. It is highly possible that, as trends have changed with economic growth and political regimes, the latter has lost its power to explain GDP variation on its own. As a second hypothesis, it is suspected that the type or regime a country has can actually account for differences in the relationship between GDP and other variables in this particular test, with population.  In order to test this, another simple linear regression model was ran utilizing population as an economic growth predictor. The theory regarding the relationship between these two variables is also unclear. Although having more population can lead to more inner consumption, this is only possible if the population has sufficient incomes. In consequence, even with a huge population, this might not necessarily imply an increase in GDP.  To test the relationship between population and GDP, we decided to see whether different types of regimes can account for significant changes in the aforementioned relationship.  Given that the democratic index has up to 21 different values, broader categories were utilized, which can be summarized into 5 different categories. Each one of them, according to the fixed-effect model, would be used as a dummy variable to test if there are any significant differences between population and GDP when the type of regime intervenes.  Same as with GDP, the nature of population as variable was also explored. 
+
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Boxplots: Population through the years", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=date,y=POP))+
+  geom_boxplot(aes(group=cut_width(date,0.1)),outlier.colour = "red")+
+  xlab("Year")+ylab("Population")
+```
+
+Figure 5 does not only show the presence of multiple outliers through time, but that data for population is very skewed. We proceed to transform the population variable with log~10~, similar to what was done with GDP. This can be seen in Figure 6.
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Boxplots \n log~10~ Population through the years", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=date,y=POP))+
+  scale_y_log10()+
+  geom_boxplot(aes(group=cut_width(date,0.1)),outlier.colour = "red")+
+  xlab("Year")+ylab("log~10~Population")
+```
+
+Even though outliers were identified, these were not removed since there were barely any outliers when checking for GDP. It is suspected that this might not have an effect when running a simple regression model between the two variables. If removed, it is suspected that this would have an effect on the determination coefficient (*R^2^*) that might prejudice the regression interpretation. Now we proceed to run our linear regression model, where population will be the predictor and GDP the dependent variable.
+
+\pagebreak
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Linear regression model: log10 GDP in USD by log10 Population through the years", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=POP,y=GDP_USD))+
+  geom_point()+
+  geom_smooth(method = lm, se = FALSE)+
+  scale_y_log10()+
+  scale_x_log10()+
+  facet_wrap(~date,nrow=2)+
+  xlab("log~10~GDP")+ylab("log~10~GDP in USD")
+```
+
+***Summary 2: Linear regression model parameter change through the years. Log~10~ GDP by democratic index***
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Table 1: PolityIV Score", out.width = "55%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  split(.$date)%>%
+  map(~lm(log10(GDP_USD) ~ log10(POP), data = .))%>%
+  map(summary)%>%
+  map(coef)
+```
+
+\pagebreak
+
+```{r, echo = FALSE, results='markup'}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  split(.$date)%>%
+  map(~lm(log10(GDP_USD) ~ log10(POP), data = .))%>%
+  map(summary)%>%
+  map_dbl("r.squared")%>%
+  kable(., caption = "R squared value through the years: GDP by Population")%>%
+  kable_styling(latex_options = c("striped","hold_position"))%>%
+  add_header_above(c("Year" = 1, "R squared" = 1))
+```
+
+Unlike the linear regression model to explore the relationship between GDP and type of regime, the relationship between GDP by population is more powerful. Not only graphically, but also when interpreting the parameters from the model (*p<0.001* for all the explored years). On the other hand, the *R^2^*, although diminishing through time, presents a less dramatically dropdown.  With that, the relationship was tested for significant differences when the relationship is checked by how democratic the country is. In order to do this, a linear regression model was utilized to look at several years. This time, the effect of the political regime will be highlighted.
+
+
+```{r, echo = FALSE, message = FALSE, fig.align = "center", fig.cap = "Linear regression model: log10 GDP by log10 Population - Checked by type of regime", out.width = "80%"}
+FULL%>%
+  filter(date==1965|date==1975|date==1985|date==1995|date==2005|
+           date==2015)%>%
+  transform(date=as.character(date))%>%
+  ggplot(aes(x=POP,y=GDP_USD))+
+  geom_point()+
+  geom_smooth(aes(colour=INDEX_TYPE),method = lm, se = FALSE)+
+  scale_y_log10()+
+  scale_x_log10()+
+  facet_wrap(~date,nrow=2)+
+  xlab("log~10~GDP")+ylab("log~10~GDP in USD")+labs(fill = "Type of regime")
+```
+
+As seen above, the relationship between GDP and population is consistent even when controlled by the type of regime. Nonetheless, depending on the type of regime, the effect of population on GDP will be more or less pronounced. To better look at this, a fixed-effect model analysis was utilized.
+
+\pagebreak
+
+***Summary 3: Fixed effect model: log10 GDP by log10 population, controlled by type of regime. Year 1965*** 
+
+```{r, echo = FALSE}
+FULL_1965<-FULL%>%
+  filter(date==1965)
+FIXED1965Q<-lm(log10(GDP_USD) ~ log10(POP) + 
+                factor(INDEX_TYPE) -1, data = FULL_1965)
+summary(FIXED1965Q)
+```
+
+***Summary 4: Fixed effect model: log10 GDP by log10 population, controlled by type of regime. Year 2015*** 
+
+```{r, echo = FALSE}
+FULL_2015<-FULL%>%
+  filter(date==2015)
+FIXED2015Q<-lm(log10(GDP_USD) ~ log10(POP) + 
+                factor(INDEX_TYPE) -1, data = FULL_2015)
+summary(FIXED2015Q)
+```
+
+As seen in the results for the year 1965, being a democracy has a significant difference among other types of regimes. However, based on the 2015 results, it can be seen that the effect of democracy has is slightly smaller than autocracies. This is consistent with the linear regression model graphs presented before.  With this analysis, it can be concluded that when using the political regime as a discrete variable, differences between two different variables can be accounted for. In this particular case, for GDP and population.
+
+## 5. Testing democracy in a multiple linear regression model
+
+Given that our results showed that the different types of regimes could account for significant differences regarding the relationship between GDP and population, testing the effect using a multiple linear regression model would be ideal. For this, GDP was used as the predicted variable since the main scope of our work is to account for the effect of democracy on GDP.  On the other hand, variables related to governance as predictors were utilized. As mentioned earlier, one key element for GDP development is government effectiveness, which guarantees a structure for constant economic growth by providing the minimal assurance to promote investment, consumption, and law enforcement. For this purpose, WB data offers a series of variables which will come in handy:
+
+1. Voice and Accountability (**VA**)
+2. Political Stability and Absence of Violence (**RV**)
+3. Government Effectiveness (**GE**)
+4. Regulatory Quality (**RQ**)
+5. Rule of Law (**RL**)
+6. Control of Corruption (**CC**)  
+
+It can be expected that governance variables will fit well in the multiple linear regression model and will have a significant effect on GDP increase. In addition, controlling the relationship by type of regime will highlight significant differences in the aforementioned relationship.  For this purpose, data manipulation was applied with POLITY and WB data once again. Table 7 shows how data looked like.
+
+```{r, echo = FALSE, results='markup', message = FALSE, fig.align = "center"}
+GOV<-wb(country="countries_only",
+        indicator = c("NY.GDP.MKTP.CD","SP.POP.TOTL","CC.EST",
+                      "GE.EST","PV.EST","RL.EST","RQ.EST","VA.EST"),
+         startdate = 1996, enddate = 2015,
+         return_wide = TRUE)
+wbgov<-countries%>%
+  select(iso3c,region)%>%
+  right_join(GOV,by="iso3c")%>%
+  left_join(indexf,by=NULL)
+FULLGOV<-select(wbgov,(1:15),-4)%>%
+  rename(GDP_USD=NY.GDP.MKTP.CD,
+         POP=SP.POP.TOTL,
+         CC=CC.EST,
+         GE=GE.EST,
+         PV=PV.EST,
+         RL=RL.EST,
+         RQ=RQ.EST,
+         VA=VA.EST)%>%
+  transform(date=as.numeric(date))%>%
+  filter(is.na(GDP_USD)==FALSE)%>%
+  filter(is.na(INDEX)==FALSE)%>%
+  filter(is.na(INDEX_TYPE)==FALSE)%>%
+  na.omit()
+knitr::kable(FULLGOV[1:8,], caption = "Polity with World Bank data frames merged, including governance variables")%>%
+  kable_styling(latex_options = c("striped","hold_position", "scale_down"))
+```
+
+After preparing the dataset,  a multiple linear regression model was run. Since the information for this dataset is only available since the year 1996, four models were run, each one for the years 2000, 2005, 2010 and 2015.
+
+\pagebreak
+
+***Summary 5: Multiple linear regression model parameter change through the years. Log~10~ GDP by governance indicators***
+
+```{r, echo = FALSE}
+FULLGOV%>%
+  filter(date==2000|date==2005|date==2010|date==2015)%>%
+  split(.$date)%>%
+  map(~lm(log10(GDP_USD) ~ CC + GE + PV + RL + RQ + VA, data = .))%>%
+  map(summary)%>%
+  map(coef)
+```
+
+It can be noticed that for the years explored, the effect of governance variables is not the one we expected. It can be drawn that:
+
+1. Not all of them have positive effects on GDP.
+2. Not all of the parameters for each predictor variable is actually significant for the model.
+3. Government Effectiveness seems to have a more significative effect when compared to all other governance variables, which is consistent and significant for all years.
+
+This is in contrast to recent literature where it is suggested that certain conditions, like good governance, actually foster an increase in GDP and not necessarily a decrease in it. *R^2^* was also calculated to see how much of the variance of GDP can be explained by governance variables.
+
+\pagebreak
+
+```{r, echo = FALSE, results='markup'}
+FULLGOV%>%
+  split(.$date)%>%
+  map(~lm(log10(GDP_USD) ~ CC + GE + PV + RL + RQ + VA, data = .))%>%
+  map(summary)%>%
+  map_dbl("r.squared")%>%
+  kable(., caption = "R squared value through the years: GDP by governance variables")%>%
+  kable_styling(latex_options = c("striped","hold_position"))%>%
+  add_header_above(c("Year" = 1, "R squared" = 1))
+```
+
+The *R^2^* is actually high. However, it is not consistent through the years, which indicates that the variance on GDP through time is not necessarily due to or in accordance with governance-related indicators. Although results suggest that a different model has to be utilized by now, regime type was still used as a fixed effect in order to see any significant differences in the relationship between governance and GDP.
+
+\pagebreak
+
+***Summary 6: Fixed effect model: log10 GDP in USD by log10 population, controlled by type of regime***
+```{r, echo = FALSE}
+FIXEDFULLG<-lm(log10(GDP_USD) ~ CC + GE + PV + RL + RQ + VA + 
+                factor(INDEX_TYPE) -1, data = FULLGOV)
+summary(FIXEDFULLG)
+```
+
+Results on the fixed-effect model for years 1996 through 2015 showed two interesting findings:
+
+1. When accounting for the governance variables, only two of them are not significant.
+2. The effect of regime type as a fixed-effect is showing no significant differences in the relationship between GDP and governance.
+
+In conclusion, we can say that regime type is not suitable to address the differences between governance variables and GDP. We suspect that this does not necessarily occur due to the variable nature of the type of regime but by the possible high correlation between governance and democracy, causing a collinearity effect that was not anticipated.
+
+## 6. Discussion and conclusions
+
+The study scope was merely exploratory. However, as suspected, democracy is not suitable to explain GDP variance. In the past, its effect was already small and has continued to decrease. There has been a significant shift when it comes to the world’s largest economies, where countries such as China, Russia, Saudi Arabia, among others, are showing that the relationship between democracy and economic growth is no longer viable. It would have been more interesting to account for the differences these economies can show if selected for a regression model.
+
+On the other hand, it was fascinating to see how the type of regime a country has can account for differences in the relationship between different variables, one of them being GDP. Regarding population and GDP, the type of regime showed that there were some significant changes depending on how democratic the country is. Consistent with the shift, every year, it is losing its power as an intervening variable, especially for explaining differences regarding full democracies against autocracies
+
+Regarding governance, it seems that variables regarding how much a country can guarantee the stability for economic growth are not significant for our multiple regression model or may not be not providing the desired positive effect. Although possible collinearity problem regarding governance variables and type of regime has been accounted for, the latter didn’t prove to be useful when used to check for differences in the relationship between governance and GDP.
+
+## 7. Limitations
+
+It is essential to acknowledge the WB API as a source of invaluable information, which is continuously updated. However, it is also important to take into account that much information is missing, not only through time but also for certain countries. When using its data to compare different countries in general, some bias may arise.  On the other hand, the WB indicator data set contained more than 17,000 variables. It would have been more beneficial to run a component analysis or an exploratory factor analysis in order to consider more variables that were related to GDP instead of only the ones noted in literature.
+
+In addition, the process of merging two different data sets ended up being troublesome than beneficial, mostly because of the decision to take one of them as the base data set from where all the merging would happen. This meant losing even more information, and since governance variables as predictors were an interest, cases that only contained both governance and GDP were intentionally selected, disregarding several GDP single cases, as well as several governance single cases. This could have affected our multiple linear regression model.
+
+Finally, the lack of statistical skills when it comes to logistic regression by the researchers has to be recognized. For instance, due to the nature of the governance variables, as well as the type of regime variable, it would have been better to run a logistic regression model rather than a linear one. Nonetheless, due to R’s usefulness, it will be possible to re-run the model once a better understanding of a more appropriate and powerful statistical method has been obtained by the researchers.
+
+\pagebreak
+
+## 8. References
+
+
+
+
